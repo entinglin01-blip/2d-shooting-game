@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>2D射擊遊戲</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        #game-container {
+            width: 100%;
+            height: 100vh;
+        }
+    </style>
+</head>
+<body>
+    <div id="game-container"></div>
+    <script src="https://cdn.jsdelivr.net/npm/phaser@3.55.2/dist/phaser.js"></script>
+    <script>
+        // 遊戲配置
+        const CONFIG = {
+            SCREEN_WIDTH: 800,
+            SCREEN_HEIGHT: 600,
+            PLAYER_SIZE: 40,
+            PLAYER_SPEED: 250,
+            PLAYER_MAX_HEALTH: 100,
+        };
+
+        // 敵人配置
+        const ENEMY_CONFIG = {
+            normal: { size: 30, health: 1, speed: 100, damage: 10, score: 10 },
+            fast: { size: 25, health: 1, speed: 180, damage: 15, score: 20 },
+            tank: { size: 50, health: 5, speed: 60, damage: 25, score: 50 },
+            shooter: { size: 35, health: 2, speed: 80, damage: 15, score: 30 },
+        };
+
+        // 武器配置
+        const WEAPON_CONFIG = {
+            basic: { fireRate: 100, bulletSpeed: 400, damage: 1, spread: 0, name: '基礎槍' },
+            spread: { fireRate: 150, bulletSpeed: 350, damage: 0.8, spread: 0.3, name: '散彈槍' },
+            laser: { fireRate: 500, bulletSpeed: 600, damage: 3, spread: 0, name: '雷射槍' },
+            rapid: { fireRate: 50, bulletSpeed: 350, damage: 0.5, spread: 0, name: '連發槍' },
+        };
+
+        // 難度配置
+        const DIFFICULTIES = {
+            EASY: { name: '簡單', multiplier: 0.7 },
+            NORMAL: { name: '普通', multiplier: 1.0 },
+            HARD: { name: '困難', multiplier: 1.5 },
+            NIGHTMARE: { name: '夢魘', multiplier: 2.0 },
+        };
+
+        // 玩家類
+        class Player {
+            constructor(scene, x, y) {
+                this.scene = scene;
+                this.sprite = scene.add.rectangle(x, y, CONFIG.PLAYER_SIZE, CONFIG.PLAYER_SIZE, 0x00ff00);
+                scene.physics.add.existing(this.sprite);
+                this.sprite.body.setCollideWorldBounds(true);
+                this.health = CONFIG.PLAYER_MAX_HEALTH;
+                this.maxHealth = CONFIG.PLAYER_MAX_HEALTH;
+                this.shield = 0;
+                this.currentWeapon = 'basic';
+                this.weapons = { basic: 1, spread: 0, laser: 0, rapid: 0 };
+                this.speed = CONFIG.PLAYER_SPEED;
+            }
+
+            update(keys) {
+                let vx = 0, vy = 0;
+                if (keys.up.isDown || keys.w.isDown) vy -= this.speed;
+                if (keys.down.isDown || keys.s.isDown) vy += this.speed;
+                if (keys.left.isDown || keys.a.isDown) vx -= this.speed;
+                if (keys.right.isDown || keys.d.isDown) vx += this.speed;
+                this.sprite.body.setVelocity(vx, vy);
+            }
+
+            takeDamage(amount) {
+                if (this.shield > 0) {
+                    const shieldDamage = Math.min(this.shield, amount);
+                    this.shield -= shieldDamage;
+                    amount -= shieldDamage;
+                }
+                if (amount > 0) this.health = Math.max(0, this.health - amount);
+            }
+
+            heal(amount) {
+                this.health = Math.min(this.maxHealth, this.health + amount);
+            }
+
+            getX() { return this.sprite.x; }
+            getY() { return this.sprite.y; }
+        }
+
+        // 敵人類
+        class Enemy {
+            constructor(scene, x, y, type = 'normal') {
+                this.scene = scene;
+                this.type = type;
+                this.config = ENEMY_CONFIG[type];
+                this.health = this.config.health;
+                const colors = { normal: 0xff0000, fast: 0xffff00, tank: 0xff8800, shooter: 0xff00ff };
+                this.sprite = scene.add.rectangle(x, y, this.config.size, this.config.size, colors[type]);
+                scene.physics.add.existing(this.sprite);
+                this.shootTimer = 0;
+            }
+
+            update(player) {
+                if (!player) return;
+                const angle = Phaser.Math.Angle.Between(this.sprite.x, this.sprite.y, player.getX(), player.getY());
+                this.scene.physics.velocityFromAngle(Phaser.Math.RadToDeg(angle), this.config.speed, this.sprite.body.velocity);
+            }
+
+            takeDamage(amount) {
+                this.health -= amount;
+            }
+
+            isAlive() { return this.health > 0; }
+            getX() { return this.sprite.x; }
+            getY() { return this.sprite.y; }
+        }
+
+        // 菜單場景
+        class MenuScene extends Phaser.Scene {
+            constructor() { super({ key: 'MenuScene' }); }
+
+            create() {
+                const { width, height } = this.cameras.main;
+                this.add.rectangle(width / 2, height / 2, width, height, 0x1a1a1a);
+                this.add.text(width / 2, 100, '2D射擊遊戲', { fontSize: '60px', fill: '#00ff00', fontStyle: 'bold' }).setOrigin(0.5);
+
+                const startButton = this.add.rectangle(width / 2, 250, 280, 60, 0x444444);
+                startButton.setInteractive({ useHandCursor: true });
+                startButton.setStrokeStyle(2, 0xffff00);
+                this.add.text(width / 2, 250, '開始遊戲 [SPACE]', { fontSize: '24px', fill: '#ffff00' }).setOrigin(0.5);
+                startButton.on('pointerdown', () => this.scene.start('DifficultyScene'));
+                startButton.on('pointerover', () => startButton.setFillStyle(0x666666));
+                startButton.on('pointerout', () => startButton.setFillStyle(0x444444));
+
+                this.input.keyboard.on('keydown-SPACE', () => this.scene.start('DifficultyScene'));
+                this.add.text(width / 2, height - 80, '方向鍵/WASD移動 | 鼠標/空格射擊 | E切換武器 | P暫停', {
+                    fontSize: '14px', fill: '#cccccc', align: 'center'
+                }).setOrigin(0.5);
+            }
+        }
+
+        // 難度選擇場景
+        class DifficultyScene extends Phaser.Scene {
+            constructor() { super({ key: 'DifficultyScene' }); }
+
+            create() {
+                const { width, height } = this.cameras.main;
+                this.add.rectangle(width / 2, height / 2, width, height, 0x1a1a1a);
+                this.add.text(width / 2, 60, '選擇難度', { fontSize: '48px', fill: '#00ff00', fontStyle: 'bold' }).setOrigin(0.5);
+
+                const difficulties = ['EASY', 'NORMAL', 'HARD', 'NIGHTMARE'];
+                difficulties.forEach((difficulty, index) => {
+                    const y = 160 + index * 90;
+                    const button = this.add.rectangle(width / 2, y, 300, 70, 0x444444);
+                    button.setInteractive({ useHandCursor: true });
+                    button.setStrokeStyle(2, 0xffff00);
+                    this.add.text(width / 2, y - 10, DIFFICULTIES[difficulty].name, { fontSize: '28px', fill: '#ffff00' }).setOrigin(0.5);
+                    this.add.text(width / 2, y + 20, `倍數: ${DIFFICULTIES[difficulty].multiplier}x`, { fontSize: '14px', fill: '#cccccc' }).setOrigin(0.5);
+                    button.on('pointerdown', () => this.scene.start('GameScene', { difficulty }));
+                    button.on('pointerover', () => button.setFillStyle(0x666666));
+                    button.on('pointerout', () => button.setFillStyle(0x444444));
+                });
+
+                this.input.keyboard.on('keydown-ESC', () => this.scene.start('MenuScene'));
+            }
+        }
+
+        // 主遊戲場景
+        class GameScene extends Phaser.Scene {
+            constructor() { super({ key: 'GameScene' }); }
+
+            init(data) {
+                this.difficulty = data.difficulty || 'NORMAL';
+                this.difficultyMultiplier = DIFFICULTIES[this.difficulty].multiplier;
+            }
+
+            create() {
+                const { width, height } = this.cameras.main;
+                this.score = 0;
+                this.level = 1;
+                this.enemiesDefeated = 0;
+                this.enemiesNeeded = 5;
+                this.isPaused = false;
+
+                this.add.rectangle(width / 2, height / 2, width, height, 0x0a0a0a);
+
+                this.player = new Player(this, width / 2, height - 50);
+                this.bullets = this.physics.add.group();
+                this.enemies = this.physics.add.group();
+                this.enemyBullets = this.physics.add.group();
+
+                this.physics.add.overlap(this.bullets, this.enemies, this.onBulletHitEnemy, null, this);
+                this.physics.add.overlap(this.player.sprite, this.enemies, this.onPlayerHitEnemy, null, this);
+                this.physics.add.overlap(this.player.sprite, this.enemyBullets, this.onPlayerHitByBullet, null, this);
+
+                this.scoreText = this.add.text(16, 16, `分數: ${this.score}`, { fontSize: '20px', fill: '#ffff00' });
+                this.levelText = this.add.text(width - 150, 16, `關卡: ${this.level}`, { fontSize: '20px', fill: '#00ff00' });
+                this.healthBar = this.add.rectangle(16, 60, 200, 20, 0x333333);
+                this.healthFill = this.add.rectangle(16, 60, 200, 20, 0x00ff00);
+                this.healthText = this.add.text(16, 60, `血量: ${this.player.health}/${this.player.maxHealth}`, { fontSize: '14px', fill: '#ffff00' });
+                this.enemyCountText = this.add.text(width - 150, 50, `敵人: ${this.enemiesDefeated}/${this.enemiesNeeded}`, { fontSize: '16px', fill: '#ff00ff' });
+                this.weaponText = this.add.text(width - 150, 80, `武器: ${WEAPON_CONFIG[this.player.currentWeapon].name}`, { fontSize: '14px', fill: '#ffaa00' });
+                this.pauseText = this.add.text(width / 2, height - 30, '按P暫停', { fontSize: '14px', fill: '#999999', align: 'center' }).setOrigin(0.5);
+
+                this.keys = this.input.keyboard.addKeys({
+                    up: Phaser.Input.Keyboard.KeyCodes.UP,
+                    down: Phaser.Input.Keyboard.KeyCodes.DOWN,
+                    left: Phaser.Input.Keyboard.KeyCodes.LEFT,
+                    right: Phaser.Input.Keyboard.KeyCodes.RIGHT,
+                    w: Phaser.Input.Keyboard.KeyCodes.W,
+                    a: Phaser.Input.Keyboard.KeyCodes.A,
+                    s: Phaser.Input.Keyboard.KeyCodes.S,
+                    d: Phaser.Input.Keyboard.KeyCodes.D,
+                    space: Phaser.Input.Keyboard.KeyCodes.SPACE,
+                    p: Phaser.Input.Keyboard.KeyCodes.P,
+                    e: Phaser.Input.Keyboard.KeyCodes.E,
+                });
+
+                this.input.on('pointerdown', () => this.shoot());
+                this.time.addRepeatedEvent({ delay: 1000 / this.difficultyMultiplier, callback: () => this.spawnEnemy(), loop: true });
+            }
+
+            update() {
+                if (this.isPaused) return;
+                this.player.update(this.keys);
+
+                if (this.keys.space.isDown && !this.lastShootTime) {
+                    this.shoot();
+                    this.lastShootTime = true;
+                    this.time.delayedCall(100, () => { this.lastShootTime = false; });
+                }
+
+                if (this.keys.e.isDown && !this.lastWeaponSwitch) {
+                    this.switchWeapon();
+                    this.lastWeaponSwitch = true;
+                    this.time.delayedCall(200, () => { this.lastWeaponSwitch = false; });
+                }
+
+                if (this.keys.p.isDown && !this.lastPausePress) {
+                    this.isPaused = !this.isPaused;
+                    this.pauseText.setText(this.isPaused ? '已暫停' : '按P暫停');
+                    this.lastPausePress = true;
+                    this.time.delayedCall(200, () => { this.lastPausePress = false; });
+                }
+
+                this.enemies.children.entries.forEach((enemy) => {
+                    if (enemy.gameObject) enemy.gameObject.update(this.player);
+                    if (enemy.gameObject && !enemy.gameObject.isAlive()) enemy.destroy();
+                });
+
+                this.bullets.children.entries.forEach((bullet) => {
+                    if (bullet.x < 0 || bullet.x > 800 || bullet.y < 0 || bullet.y > 600) bullet.destroy();
+                });
+
+                this.scoreText.setText(`分數: ${this.score}`);
+                this.levelText.setText(`關卡: ${this.level}`);
+                this.healthText.setText(`血量: ${this.player.health}/${this.player.maxHealth}`);
+                this.healthFill.displayWidth = (this.player.health / this.player.maxHealth) * 200;
+                this.enemyCountText.setText(`敵人: ${this.enemiesDefeated}/${this.enemiesNeeded}`);
+                this.weaponText.setText(`武器: ${WEAPON_CONFIG[this.player.currentWeapon].name}`);
+
+                if (this.player.health <= 0) this.scene.start('GameOverScene', { score: this.score, level: this.level });
+            }
+
+            shoot() {
+                const config = WEAPON_CONFIG[this.player.currentWeapon];
+                const angle = Phaser.Math.Angle.Between(this.player.getX(), this.player.getY(), this.input.activePointer.x, this.input.activePointer.y);
+                
+                if (config.spread === 0) {
+                    this.createBullet(angle, config);
+                } else {
+                    for (let i = -1; i <= 1; i++) this.createBullet(angle + i * config.spread, config);
+                }
+            }
+
+            createBullet(angle, config) {
+                const bullet = this.add.rectangle(this.player.getX(), this.player.getY(), 6, 6, 0xffff00);
+                this.physics.add.existing(bullet);
+                this.physics.velocityFromAngle(Phaser.Math.RadToDeg(angle), config.bulletSpeed, bullet.body.velocity);
+                bullet.damage = config.damage;
+                this.bullets.add(bullet);
+            }
+
+            spawnEnemy() {
+                if (this.isPaused) return;
+                const { width, height } = this.cameras.main;
+                let x, y, side = Phaser.Math.Between(0, 3);
+                
+                switch (side) {
+                    case 0: x = Phaser.Math.Between(0, width); y = -20; break;
+                    case 1: x = width + 20; y = Phaser.Math.Between(0, height); break;
+                    case 2: x = Phaser.Math.Between(0, width); y = height + 20; break;
+                    case 3: x = -20; y = Phaser.Math.Between(0, height); break;
+                }
+
+                const rand = Math.random();
+                let type = 'normal';
+                if (rand < 0.6) type = 'normal';
+                else if (rand < 0.85) type = 'fast';
+                else if (rand < 0.95) type = 'tank';
+                else type = 'shooter';
+
+                const enemy = new Enemy(this, x, y, type);
+                this.enemies.add(enemy.sprite);
+                enemy.sprite.gameObject = enemy;
+            }
+
+            onBulletHitEnemy(bullet, enemySprite) {
+                const enemy = enemySprite.gameObject;
+                if (!enemy) return;
+                bullet.destroy();
+                enemy.takeDamage(bullet.damage);
+                if (!enemy.isAlive()) {
+                    enemy.sprite.destroy();
+                    this.score += enemy.config.score * this.level * this.difficultyMultiplier;
+                    this.enemiesDefeated++;
+                    if (this.enemiesDefeated >= this.enemiesNeeded) this.nextLevel();
+                }
+            }
+
+            onPlayerHitEnemy(player, enemySprite) {
+                const enemy = enemySprite.gameObject;
+                if (!enemy) return;
+                this.player.takeDamage(enemy.config.damage);
+            }
+
+            onPlayerHitByBullet(player, bullet) {
+                this.player.takeDamage(5);
+                bullet.destroy();
+            }
+
+            nextLevel() {
+                this.level++;
+                this.enemiesDefeated = 0;
+                this.enemiesNeeded = Math.floor(5 + this.level * 2 * this.difficultyMultiplier);
+                this.player.heal(20);
+                this.enemies.clear(true, true);
+                this.bullets.clear(true, true);
+            }
+
+            switchWeapon() {
+                const weapons = ['basic', 'spread', 'laser', 'rapid'];
+                const currentIndex = weapons.indexOf(this.player.currentWeapon);
+                this.player.currentWeapon = weapons[(currentIndex + 1) % weapons.length];
+            }
+        }
+
+        // 遊戲結束場景
+        class GameOverScene extends Phaser.Scene {
+            constructor() { super({ key: 'GameOverScene' }); }
+
+            init(data) {
+                this.finalScore = data.score || 0;
+                this.finalLevel = data.level || 1;
+            }
+
+            create() {
+                const { width, height } = this.cameras.main;
+                this.add.rectangle(width / 2, height / 2, width, height, 0x1a1a1a);
+                this.add.text(width / 2, 60, '遊戲結束', { fontSize: '60px', fill: '#ff0000', fontStyle: 'bold' }).setOrigin(0.5);
+                this.add.text(width / 2, 200, `最終分數: ${this.finalScore}`, { fontSize: '28px', fill: '#ffff00' }).setOrigin(0.5);
+                this.add.text(width / 2, 260, `到達關卡: ${this.finalLevel}`, { fontSize: '28px', fill: '#00ff00' }).setOrigin(0.5);
+
+                const restartButton = this.add.rectangle(width / 2, height / 2 + 80, 280, 60, 0x444444);
+                restartButton.setInteractive({ useHandCursor: true });
+                restartButton.setStrokeStyle(2, 0xffff00);
+                this.add.text(width / 2, height / 2 + 80, '重新開始 [SPACE]', { fontSize: '24px', fill: '#ffff00' }).setOrigin(0.5);
+                restartButton.on('pointerdown', () => this.scene.start('MenuScene'));
+                restartButton.on('pointerover', () => restartButton.setFillStyle(0x666666));
+                restartButton.on('pointerout', () => restartButton.setFillStyle(0x444444));
+
+                this.input.keyboard.on('keydown-SPACE', () => this.scene.start('MenuScene'));
+            }
+        }
+
+        // 遊戲配置
+        const gameConfig = {
+            type: Phaser.AUTO,
+            width: 800,
+            height: 600,
+            backgroundColor: '#000000',
+            parent: 'game-container',
+            scene: [MenuScene, DifficultyScene, GameScene, GameOverScene],
+            physics: {
+                default: 'arcade',
+                arcade: {
+                    gravity: { y: 0 },
+                    debug: false,
+                },
+            },
+        };
+
+        const game = new Phaser.Game(gameConfig);
+    </script>
+</body>
+</html>
