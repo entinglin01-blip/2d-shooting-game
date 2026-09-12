@@ -1,7 +1,10 @@
 import Phaser from 'phaser';
 import BootScene from './scenes/BootScene';
 import MenuScene from './scenes/MenuScene';
+import DifficultyScene from './scenes/DifficultyScene';
 import GameScene from './scenes/GameScene';
+import AchievementScene from './scenes/AchievementScene';
+import SettingsScene from './scenes/SettingsScene';
 import GameOverScene from './scenes/GameOverScene';
 
 const config = {
@@ -10,7 +13,15 @@ const config = {
   height: 600,
   backgroundColor: '#1a1a1a',
   parent: 'game-container',
-  scene: [BootScene, MenuScene, GameScene, GameOverScene],
+  scene: [
+    BootScene,
+    MenuScene,
+    DifficultyScene,
+    GameScene,
+    AchievementScene,
+    SettingsScene,
+    GameOverScene,
+  ],
   physics: {
     default: 'arcade',
     arcade: {
